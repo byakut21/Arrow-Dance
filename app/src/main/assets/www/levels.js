@@ -31,7 +31,8 @@
       cols: Math.min(4 + Math.floor((n - 1) / 5), 9),
       rows: Math.min(5 + Math.floor((n - 1) / 4), 13),
       density: Math.min(0.55 + n * 0.012, 0.9),
-      maxLen: n < 6 ? 1 : n < 16 ? 2 : n < 35 ? 3 : 4,
+      maxLen: n < 4 ? 2 : n < 8 ? 3 : n < 16 ? 4 : n < 30 ? 5 : n < 60 ? 6 : 7,
+      turn: n < 3 ? 0 : Math.min(0.55 + n * 0.01, 0.8), // kıvrılma olasılığı
       walls: n < 11 ? 0 : Math.min(1 + Math.floor((n - 11) / 5), 9),
       chainBias: Math.min(0.35 + n * 0.02, 0.92),
       targetDepth: Math.min(2 + Math.floor(n / 3), 16),
@@ -43,6 +44,34 @@
     const c = [];
     for (let k = len - 1; k >= 0; k--) c.push([x - DX[d] * k, y - DY[d] * k]);
     return c;
+  }
+
+  // Kıvrımlı ok: baştan geriye doğru rastgele yürüyerek gövde oluşturur.
+  // Son parça her zaman başın yönündedir (ok başı gövdeyle aynı yöne bakar).
+  function snakeCells(x, y, d, L, occ, cols, rows, rng, turn) {
+    const cells = [[x, y]], used = new Set([y * cols + x]);
+    let bd = (d + 2) % 4, cx = x, cy = y; // geriye yürüme yönü
+    for (let i = 1; i < L; i++) {
+      let opts;
+      if (i === 1) opts = [bd];
+      else if (rng() < turn) opts = rng() < 0.5 ? [(bd + 1) % 4, (bd + 3) % 4, bd] : [(bd + 3) % 4, (bd + 1) % 4, bd];
+      else opts = [bd, (bd + 1) % 4, (bd + 3) % 4];
+      let moved = false;
+      for (const nd of opts) {
+        const nx = cx + DX[nd], ny = cy + DY[nd], k = ny * cols + nx;
+        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows || occ[k] !== -1 || used.has(k)) continue;
+        cx = nx; cy = ny; bd = nd; cells.push([nx, ny]); used.add(k); moved = true; break;
+      }
+      if (!moved) break;
+    }
+    return cells.reverse(); // kuyruk -> baş
+  }
+
+  function bends(c) {
+    let b = 0;
+    for (let i = 2; i < c.length; i++)
+      if (c[i][0] - c[i - 1][0] !== c[i - 1][0] - c[i - 2][0] || c[i][1] - c[i - 1][1] !== c[i - 1][1] - c[i - 2][1]) b++;
+    return b;
   }
 
   // Okun önündeki ilk engel. null => yol açık (ok çıkabilir)
@@ -103,25 +132,28 @@
       const want = 1 + Math.floor(Math.pow(rng(), 0.7) * p.maxLen);
       const cands = [];
       for (const d of shuffle([0, 1, 2, 3], rng)) {
-        for (let L = want; L >= 1; L--) {
-          const cells = cellsOf(x, y, d, L);
-          if (!cells.every(([cx, cy]) => cx >= 0 && cy >= 0 && cx < cols && cy < rows && occ[cy * cols + cx] === -1)) continue;
-          const a = { x, y, d, len: L, cells };
-          arrows.push(a);
-          const ok = analyze(cols, rows, walls, arrows).solvable;
-          arrows.pop();
-          if (ok) {
-            const blocked = !!firstBlock(occ, cols, rows, a);
-            cands.push({ a, blocked });
-            break;
+        const cells = snakeCells(x, y, d, want, occ, cols, rows, rng, p.turn);
+        const a = { x, y, d, len: cells.length, cells };
+        arrows.push(a);
+        const ok = analyze(cols, rows, walls, arrows).solvable;
+        arrows.pop();
+        if (!ok) continue;
+        // Zorluk puanı: kendi yolu kapalı mı + gövdesi kaç okun yolunu kesiyor
+        let score = firstBlock(occ, cols, rows, a) ? 1 : 0;
+        const mine = new Set(cells.map(([cx, cy]) => cy * cols + cx));
+        for (const b of arrows) {
+          let bx = b.x + DX[b.d], by = b.y + DY[b.d];
+          while (bx >= 0 && by >= 0 && bx < cols && by < rows) {
+            if (mine.has(by * cols + bx)) { score++; break; }
+            if (occ[by * cols + bx] !== -1) break;
+            bx += DX[b.d]; by += DY[b.d];
           }
         }
+        cands.push({ a, score: score + bends(cells) * 0.6 });
       }
       if (!cands.length) { fails++; continue; }
-      let pick;
-      const blockedOnes = cands.filter(c => c.blocked);
-      if (blockedOnes.length && rng() < p.chainBias) pick = blockedOnes[0];
-      else pick = cands[0];
+      let pick = cands[0];
+      if (rng() < p.chainBias) for (const c of cands) if (c.score > pick.score) pick = c;
       const idx = arrows.length;
       arrows.push(pick.a);
       for (const c of pick.a.cells) occ[c[1] * cols + c[0]] = idx;
@@ -146,6 +178,18 @@
       const k = y * lv.cols + x;
       if (seen.has(k)) return 'çakışma';
       seen.add(k);
+    }
+    for (const a of lv.arrows) {
+      for (let i = 1; i < a.cells.length; i++) {
+        const [px, py] = a.cells[i - 1], [qx, qy] = a.cells[i];
+        if (Math.abs(px - qx) + Math.abs(py - qy) !== 1) return 'kopuk gövde';
+      }
+      const h = a.cells[a.cells.length - 1];
+      if (h[0] !== a.x || h[1] !== a.y || a.len !== a.cells.length) return 'baş uyumsuz';
+      if (a.cells.length > 1) {
+        const t = a.cells[a.cells.length - 2];
+        if (h[0] - t[0] !== DX[a.d] || h[1] - t[1] !== DY[a.d]) return 'baş yönü uyumsuz';
+      }
     }
     return analyze(lv.cols, lv.rows, lv.walls, lv.arrows).solvable ? null : 'çözülemez';
   }

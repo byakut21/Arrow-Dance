@@ -167,7 +167,7 @@
     setTheme(ch);
     const grid = new Int16Array(lv.cols * lv.rows).fill(-1);
     lv.walls.forEach(([x, y]) => { grid[y * lv.cols + x] = -2; });
-    const arrows = lv.arrows.map((a, i) => ({ ...a, i, alive: true, fly: null, flash: 0, pop: 0, hint: 0 }));
+    const arrows = lv.arrows.map((a, i) => ({ ...a, i, alive: true, fly: null, flash: 0, pop: 0, hint: 0, path: buildPath(a, lv.cols, lv.rows) }));
     arrows.forEach(a => a.cells.forEach(([x, y]) => { grid[y * lv.cols + x] = a.i; }));
     G = {
       n, ch, cols: lv.cols, rows: lv.rows, walls: lv.walls, arrows, grid,
@@ -238,8 +238,8 @@
       // Serbest! Ok tahtadan uçup gider
       a.alive = false;
       a.cells.forEach(([x, y]) => { G.grid[y * G.cols + x] = -1; });
-      const dist = p.k + a.len + 3 + Math.max(G.cols, G.rows);
-      a.fly = { type: 'exit', t0: now, dur: 260 + dist * 28, dist };
+      const dist = p.k + a.len + 1.5;
+      a.fly = { type: 'exit', t0: now, dur: 200 + dist * 55, dist };
       G.left--; G.tapped++;
       sfx.whoosh(G.tapped); buzz(12);
       spawnTrail(a);
@@ -292,9 +292,17 @@
     const t = $('#tutorial');
     if (G.n === 1) { $('#tutorial-text').textContent = 'Oka dokun — önü açıksa uçup gider!'; t.classList.remove('hidden'); positionTutorial(); }
     else if (G.n === 2) { $('#tutorial-text').textContent = 'Dikkat! Başka oka çarparsan can kaybedersin ❤️'; t.classList.remove('hidden'); $('#tutorial .hand').style.display = 'none'; }
-    else if (G.n === 6) { $('#tutorial-text').textContent = 'Uzun oklar geldi! Tüm gövdesi geçmeli.'; t.classList.remove('hidden'); $('#tutorial .hand').style.display = 'none'; }
+    else if (!save.seenBend && G.arrows.some(a => isBent(a))) {
+      save.seenBend = true; persist();
+      $('#tutorial-text').textContent = 'Kıvrımlı oklar! Gövde, başı takip ederek kayar.'; t.classList.remove('hidden'); $('#tutorial .hand').style.display = 'none';
+    }
     else if (G.n === 11) { $('#tutorial-text').textContent = 'Taş bloklar hiç kalkmaz — yolunu ona göre seç.'; t.classList.remove('hidden'); $('#tutorial .hand').style.display = 'none'; }
     else t.classList.add('hidden');
+  }
+  function isBent(a) {
+    const c = a.cells;
+    for (let i = 2; i < c.length; i++) if (c[i][0] - c[i - 1][0] !== c[i - 1][0] - c[i - 2][0] || c[i][1] - c[i - 1][1] !== c[i - 1][1] - c[i - 2][1]) return true;
+    return false;
   }
   function positionTutorial() {
     if (!G || G.n !== 1) return;
@@ -443,32 +451,56 @@
     ctx.globalAlpha = 1;
   }
 
+  // Okun izleyeceği yol: gövde hücreleri (kuyruk->baş) + baştan ileri uzanan ışın
+  function buildPath(a, cols, rows) {
+    const pts = a.cells.map(([x, y]) => [x, y]);
+    const ext = cols + rows + a.len + 6;
+    for (let j = 1; j <= ext; j++) pts.push([a.x + DX[a.d] * j, a.y + DY[a.d] * j]);
+    return pts;
+  }
+  function pointAt(path, t) {
+    const i = Math.max(0, Math.min(path.length - 2, Math.floor(t))), f = t - i;
+    return [path[i][0] + (path[i + 1][0] - path[i][0]) * f, path[i][1] + (path[i + 1][1] - path[i][1]) * f];
+  }
+
   function drawArrow(a, off, alpha, now) {
     const { cs, ox, oy } = layout;
     const dx = DX[a.d], dy = DY[a.d];
     let color = G.ch.colors[a.d];
     const flashing = now - a.flash < 450;
     if (flashing) color = ((now - a.flash) / 75 | 0) % 2 ? '#ff2d55' : '#ffffff';
-    const [tx, ty] = a.cells[0], [hx, hy] = a.cells[a.cells.length - 1];
-    const ofx = dx * off * cs, ofy = dy * off * cs;
-    let tcx = ox + (tx + 0.5) * cs + ofx, tcy = oy + (ty + 0.5) * cs + ofy;
-    let hcx = ox + (hx + 0.5) * cs + ofx, hcy = oy + (hy + 0.5) * cs + ofy;
-    // dokunma sekmesi
+    const L = a.len, t0 = off, t1 = off + L - 1;
+    // gövde noktaları (hücre biriminde)
+    const pts = [pointAt(a.path, t0)];
+    for (let i = Math.floor(t0) + 1; i < t1; i++) pts.push(a.path[i]);
+    pts.push(pointAt(a.path, t1));
+    const toPx = ([x, y]) => [ox + (x + 0.5) * cs, oy + (y + 0.5) * cs];
+    const P = pts.map(toPx);
+    // kuyruk yönü (ilk parçanın yönü)
+    let tdx = dx, tdy = dy;
+    if (L > 1) {
+      const nxt = pointAt(a.path, Math.min(Math.floor(t0) + 1, t1));
+      const ddx = nxt[0] - pts[0][0], ddy = nxt[1] - pts[0][1], m = Math.hypot(ddx, ddy);
+      if (m > 0.01) { tdx = ddx / m; tdy = ddy / m; }
+    }
     let sc = 1;
     const pt = now - a.pop; if (pt < 160) sc = 1 + Math.sin(pt / 160 * Math.PI) * 0.12;
-    // ipucu nabzı
     const ht = a.hint ? now - a.hint : 1e9;
     const hinting = ht < 2400;
-    const sx = tcx - dx * cs * 0.28, sy = tcy - dy * cs * 0.28;   // kuyruk ucu
-    const tipx = hcx + dx * cs * 0.32, tipy = hcy + dy * cs * 0.32; // ok ucu
-    const bx = tipx - dx * cs * 0.27, by = tipy - dy * cs * 0.27;  // başın tabanı
+    const [hcx, hcy] = P[P.length - 1];
+    const tipx = hcx + dx * cs * 0.32, tipy = hcy + dy * cs * 0.32;
+    const bx = tipx - dx * cs * 0.27, by = tipy - dy * cs * 0.27;
     const hw = cs * 0.21 * sc, lw = cs * 0.14 * sc;
-    const px = -dy, py = dx; // dik vektör
+    const px = -dy, py = dx;
+    P[0] = [P[0][0] - tdx * cs * 0.28, P[0][1] - tdy * cs * 0.28];
+    P[P.length - 1] = [bx + dx * 2, by + dy * 2];
     ctx.globalAlpha = alpha;
-    const shape = (col, yo) => {
+    const shape = (col, yo, w) => {
       ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-      ctx.lineWidth = lw;
-      ctx.beginPath(); ctx.moveTo(sx, sy + yo); ctx.lineTo(bx + dx * 2, by + dy * 2 + yo); ctx.stroke();
+      ctx.lineWidth = w || lw;
+      ctx.beginPath(); ctx.moveTo(P[0][0], P[0][1] + yo);
+      for (let i = 1; i < P.length; i++) ctx.lineTo(P[i][0], P[i][1] + yo);
+      ctx.stroke();
       ctx.lineWidth = cs * 0.06;
       ctx.beginPath(); ctx.moveTo(tipx, tipy + yo); ctx.lineTo(bx + px * hw, by + py * hw + yo); ctx.lineTo(bx - px * hw, by - py * hw + yo); ctx.closePath();
       ctx.fill(); ctx.stroke();
@@ -479,10 +511,6 @@
     }
     shape(shade(color.startsWith('#') ? color : '#ffffff', -0.28), cs * 0.045);
     shape(color, 0);
-    // parlama
-    ctx.globalAlpha = alpha * 0.35; ctx.strokeStyle = '#fff'; ctx.lineWidth = lw * 0.25;
-    const so = lw * 0.2, sox = dx !== 0 ? 0 : -so, soy = dx !== 0 ? -so : 0;
-    ctx.beginPath(); ctx.moveTo(sx + sox, sy + soy); ctx.lineTo(bx + sox - dx * cs * 0.04, by + soy - dy * cs * 0.04); ctx.stroke();
     ctx.globalAlpha = 1;
   }
 
