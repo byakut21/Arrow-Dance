@@ -18,6 +18,13 @@ android {
     }
 
     signingConfigs {
+        // Sabit debug anahtarı: her derleme aynı imzayı taşır, güncellemeler üstüne kurulur
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
         release {
             // GitHub secrets tanımlıysa imzalı sürüm APK'sı üretilir
             def ks = System.getenv('KEYSTORE_FILE')
@@ -31,6 +38,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             def ks = System.getenv('KEYSTORE_FILE')
