@@ -410,15 +410,8 @@
     for (let y = 0; y < G.rows; y++) for (let x = 0; x < G.cols; x++) {
       if (G.grid[y * G.cols + x] === -1) { ctx.beginPath(); ctx.arc(ox + (x + 0.5) * cs, oy + (y + 0.5) * cs, cs * 0.07, 0, Math.PI * 2); ctx.fill(); }
     }
-    // duvarlar
-    for (const [x, y] of G.walls) {
-      const px = ox + x * cs + cs * 0.08, py = oy + y * cs + cs * 0.08, s = cs * 0.84;
-      ctx.fillStyle = 'rgba(0,0,0,.3)'; rr(px, py + 3, s, s, cs * 0.18); ctx.fill();
-      ctx.fillStyle = ch.wall; rr(px, py, s, s, cs * 0.18); ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,.08)'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(px + s * 0.25, py + s * 0.5); ctx.lineTo(px + s * 0.75, py + s * 0.5);
-      ctx.moveTo(px + s * 0.5, py + s * 0.25); ctx.lineTo(px + s * 0.5, py + s * 0.75); ctx.stroke();
-    }
+    // taş bloklar
+    for (const [x, y] of G.walls) drawStone(x, y);
 
     // oklar
     for (const a of G.arrows) {
@@ -449,6 +442,58 @@
       else { ctx.beginPath(); ctx.arc(px, py, p.r * (1 - k), 0, Math.PI * 2); ctx.fill(); }
     }
     ctx.globalAlpha = 1;
+  }
+
+  // Dokulu, çatlaklı taş (her hücre için sabit rastgele şekil)
+  function drawStone(x, y) {
+    const { cs, ox, oy } = layout;
+    let seed = (x * 73856093) ^ (y * 19349663) ^ (G.n * 83492791);
+    const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    const cx = ox + (x + 0.5) * cs, cy = oy + (y + 0.5) * cs, R = cs * 0.43;
+    const N = 9, pts = [];
+    for (let i = 0; i < N; i++) {
+      const ang = (i / N) * Math.PI * 2 + rnd() * 0.3;
+      const r = R * (0.82 + rnd() * 0.18);
+      pts.push([cx + Math.cos(ang) * r, cy + Math.sin(ang) * r * 0.92]);
+    }
+    const poly = (dx, dy) => {
+      ctx.beginPath(); ctx.moveTo(pts[0][0] + dx, pts[0][1] + dy);
+      for (let i = 1; i < N; i++) {
+        const [px, py] = pts[i], [qx, qy] = pts[(i + 1) % N];
+        ctx.quadraticCurveTo(px + dx, py + dy, (px + qx) / 2 + dx, (py + qy) / 2 + dy);
+      }
+      ctx.closePath();
+    };
+    // gölge
+    ctx.fillStyle = 'rgba(0,0,0,.35)'; poly(0, cs * 0.07); ctx.fill();
+    // gövde
+    const g = ctx.createLinearGradient(cx - R, cy - R, cx + R, cy + R);
+    g.addColorStop(0, '#a9adb8'); g.addColorStop(0.55, '#7c808c'); g.addColorStop(1, '#565a66');
+    ctx.fillStyle = g; poly(0, 0); ctx.fill();
+    ctx.strokeStyle = 'rgba(30,32,40,.55)'; ctx.lineWidth = Math.max(1, cs * 0.03); ctx.stroke();
+    // üst parlama
+    ctx.save(); poly(0, 0); ctx.clip();
+    ctx.fillStyle = 'rgba(255,255,255,.18)';
+    ctx.beginPath(); ctx.ellipse(cx - R * 0.25, cy - R * 0.45, R * 0.55, R * 0.25, -0.4, 0, Math.PI * 2); ctx.fill();
+    // benekler
+    for (let i = 0; i < 6; i++) {
+      ctx.fillStyle = rnd() < 0.5 ? 'rgba(40,42,52,.35)' : 'rgba(255,255,255,.12)';
+      ctx.beginPath(); ctx.arc(cx + (rnd() - 0.5) * R * 1.4, cy + (rnd() - 0.5) * R * 1.4, cs * (0.015 + rnd() * 0.025), 0, Math.PI * 2); ctx.fill();
+    }
+    // çatlaklar
+    ctx.strokeStyle = 'rgba(35,37,46,.75)'; ctx.lineWidth = Math.max(1, cs * 0.025); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (let c = 0; c < 2; c++) {
+      let a = rnd() * Math.PI * 2, px = cx + Math.cos(a) * R, py = cy + Math.sin(a) * R;
+      ctx.beginPath(); ctx.moveTo(px, py);
+      const steps = 3 + (rnd() * 2 | 0);
+      for (let k = 0; k < steps; k++) {
+        const ta = Math.atan2(cy - py, cx - px) + (rnd() - 0.5) * 1.4;
+        const len = R * (0.18 + rnd() * 0.2);
+        px += Math.cos(ta) * len; py += Math.sin(ta) * len; ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   // Okun izleyeceği yol: gövde hücreleri (kuyruk->baş) + baştan ileri uzanan ışın
