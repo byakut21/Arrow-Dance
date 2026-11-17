@@ -27,15 +27,16 @@
   }
 
   function levelParams(n) {
+    const cols = Math.min(5 + Math.floor((n - 1) / 3), 12);
     return {
-      cols: Math.min(4 + Math.floor((n - 1) / 5), 9),
-      rows: Math.min(5 + Math.floor((n - 1) / 4), 13),
+      cols,
+      rows: Math.min(Math.round(cols * 1.5), 18),
       density: Math.min(0.55 + n * 0.012, 0.9),
-      maxLen: n < 4 ? 2 : n < 8 ? 3 : n < 16 ? 4 : n < 30 ? 5 : n < 60 ? 6 : 7,
+      maxLen: n < 4 ? 2 : n < 8 ? 3 : n < 16 ? 5 : n < 30 ? 6 : n < 60 ? 8 : 10,
       turn: n < 3 ? 0 : Math.min(0.55 + n * 0.01, 0.8), // kıvrılma olasılığı
-      walls: n < 11 ? 0 : Math.min(1 + Math.floor((n - 11) / 5), 9),
+      walls: n < 11 ? 0 : Math.min(1 + Math.floor((n - 11) / 4), 14),
       chainBias: Math.min(0.35 + n * 0.02, 0.92),
-      targetDepth: Math.min(2 + Math.floor(n / 3), 16),
+      targetDepth: Math.min(2 + Math.floor(n / 2), 24),
     };
   }
 

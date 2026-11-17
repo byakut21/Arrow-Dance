@@ -159,6 +159,26 @@
   let G = null; // aktif seviye
   let raf = 0;
   const layout = { cs: 40, ox: 0, oy: 0, w: 0, h: 0, dpr: 1 };
+  // Kamera (yakınlaştırma / kaydırma): ekran = taban * s + (x, y)
+  const cam = { s: 1, x: 0, y: 0 };
+  const MAX_ZOOM = 4;
+  function resetCam() { cam.s = 1; cam.x = 0; cam.y = 0; }
+  function clampCam() {
+    cam.s = Math.max(1, Math.min(MAX_ZOOM, cam.s));
+    const bw = layout.cs * G.cols, bh = layout.cs * G.rows;
+    // tahtanın en az yarısı ekranda kalsın
+    const minX = layout.w * 0.5 - (layout.ox + bw) * cam.s, maxX = layout.w * 0.5 - layout.ox * cam.s;
+    const minY = layout.h * 0.5 - (layout.oy + bh) * cam.s, maxY = layout.h * 0.5 - layout.oy * cam.s;
+    if (cam.s === 1) { cam.x = 0; cam.y = 0; return; }
+    cam.x = Math.max(minX, Math.min(maxX, cam.x));
+    cam.y = Math.max(minY, Math.min(maxY, cam.y));
+  }
+  function zoomAt(newS, sx, sy) {
+    newS = Math.max(1, Math.min(MAX_ZOOM, newS));
+    const bx = (sx - cam.x) / cam.s, by = (sy - cam.y) / cam.s;
+    cam.s = newS; cam.x = sx - bx * newS; cam.y = sy - by * newS;
+    clampCam(); positionTutorial();
+  }
 
   function startLevel(n) {
     closeModal();
@@ -178,6 +198,7 @@
     $('#hud-level').textContent = 'Seviye ' + n;
     updateHud();
     show('game');
+    resetCam();
     resize();
     setupTutorial();
     startLoop();
@@ -198,8 +219,8 @@
     canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr);
     layout.dpr = dpr; layout.w = r.width; layout.h = r.height;
     if (!G) return;
-    const pad = 14;
-    layout.cs = Math.floor(Math.min((r.width - pad * 2) / G.cols, (r.height - pad * 2) / G.rows, 58));
+    const pad = 10;
+    layout.cs = Math.min((r.width - pad * 2) / G.cols, (r.height - pad * 2) / G.rows, 46);
     layout.ox = (r.width - layout.cs * G.cols) / 2;
     layout.oy = (r.height - layout.cs * G.rows) / 2;
     positionTutorial();
@@ -217,16 +238,92 @@
     return { blocked: false, k };
   }
 
-  canvas.addEventListener('pointerdown', (e) => {
-    if (!G || G.done || modalOpen()) return;
-    const r = canvas.getBoundingClientRect();
-    const px = e.clientX - r.left - layout.ox, py = e.clientY - r.top - layout.oy;
-    const cx = Math.floor(px / layout.cs), cy = Math.floor(py / layout.cs);
-    if (cx < 0 || cy < 0 || cx >= G.cols || cy >= G.rows) return;
+  // Dokunma: kısa dokunuş = oku gönder, basılı tut = rotayı göster,
+  // tek parmak sürükle = kaydır, iki parmak = yakınlaştır
+  const ptrs = new Map();
+  let gesture = null; // {sx, sy, t, moved, pinch, holdTimer, d0, s0, mx0, my0, cx0, cy0}
+  let preview = null; // basılı tutulan ok
+  const LONG_MS = 260;
+
+  function localPt(e) { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+  function arrowAtScreen(sx, sy) {
+    const bx = (sx - cam.x) / cam.s - layout.ox, by = (sy - cam.y) / cam.s - layout.oy;
+    const cx = Math.floor(bx / layout.cs), cy = Math.floor(by / layout.cs);
+    if (cx < 0 || cy < 0 || cx >= G.cols || cy >= G.rows) return null;
     const v = G.grid[cy * G.cols + cx];
-    if (v < 0) return;
-    tapArrow(G.arrows[v]);
+    return v >= 0 ? G.arrows[v] : null;
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    if (!G || modalOpen()) return;
+    canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    const [x, y] = localPt(e);
+    ptrs.set(e.pointerId, [x, y]);
+    if (ptrs.size === 1) {
+      gesture = { sx: x, sy: y, t: performance.now(), moved: false, pinch: false, lx: x, ly: y };
+      const a = G.done ? null : arrowAtScreen(x, y);
+      if (a && a.alive && !a.fly) {
+        gesture.holdTimer = setTimeout(() => {
+          if (gesture && !gesture.moved && !gesture.pinch) { preview = a; a.pop = performance.now(); buzz(8); markSeenHold(); }
+        }, LONG_MS);
+      }
+    } else if (ptrs.size === 2 && gesture) {
+      clearTimeout(gesture.holdTimer); preview = null;
+      const [[x1, y1], [x2, y2]] = [...ptrs.values()];
+      Object.assign(gesture, { pinch: true, moved: true, d0: Math.hypot(x2 - x1, y2 - y1), s0: cam.s,
+        mx0: (x1 + x2) / 2, my0: (y1 + y2) / 2, cx0: cam.x, cy0: cam.y });
+    }
   });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (!ptrs.has(e.pointerId) || !gesture) return;
+    const [x, y] = localPt(e);
+    ptrs.set(e.pointerId, [x, y]);
+    if (gesture.pinch && ptrs.size >= 2) {
+      const [[x1, y1], [x2, y2]] = [...ptrs.values()];
+      const d = Math.hypot(x2 - x1, y2 - y1), mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+      const ns = Math.max(1, Math.min(MAX_ZOOM, gesture.s0 * d / gesture.d0));
+      // iki parmağın ortası aynı tahta noktasında kalsın
+      const bx = (gesture.mx0 - gesture.cx0) / gesture.s0, by = (gesture.my0 - gesture.cy0) / gesture.s0;
+      cam.s = ns; cam.x = mx - bx * ns; cam.y = my - by * ns;
+      clampCam(); positionTutorial();
+      return;
+    }
+    if (preview) return; // rota gösterilirken kaydırma yok
+    if (!gesture.moved && Math.hypot(x - gesture.sx, y - gesture.sy) > 10) { gesture.moved = true; clearTimeout(gesture.holdTimer); }
+    if (gesture.moved && cam.s > 1) {
+      cam.x += x - gesture.lx; cam.y += y - gesture.ly; clampCam(); positionTutorial();
+    }
+    gesture.lx = x; gesture.ly = y;
+  });
+
+  function endPointer(e) {
+    if (!ptrs.has(e.pointerId)) return;
+    ptrs.delete(e.pointerId);
+    if (!gesture) return;
+    if (ptrs.size > 0) { // pinch bitti, kalan parmakla kaydırmaya geç
+      const [[x, y]] = [...ptrs.values()]; gesture.lx = x; gesture.ly = y; gesture.pinch = false; return;
+    }
+    clearTimeout(gesture.holdTimer);
+    const wasTap = !gesture.moved && !gesture.pinch && !preview && performance.now() - gesture.t < 600;
+    if (wasTap && G && !G.done && e.type === 'pointerup') {
+      const a = arrowAtScreen(gesture.sx, gesture.sy);
+      if (a) tapArrow(a);
+    }
+    preview = null; gesture = null;
+  }
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
+  canvas.addEventListener('wheel', (e) => {
+    if (!G) return; e.preventDefault();
+    const [x, y] = localPt(e); zoomAt(cam.s * (e.deltaY < 0 ? 1.15 : 1 / 1.15), x, y);
+  }, { passive: false });
+  $('#btn-zoom-in').addEventListener('click', () => { if (G) { sfx.click(); zoomAt(cam.s * 1.5, layout.w / 2, layout.h / 2); } });
+  $('#btn-zoom-out').addEventListener('click', () => { if (G) { sfx.click(); zoomAt(cam.s / 1.5, layout.w / 2, layout.h / 2); } });
+  $('#btn-zoom-fit').addEventListener('click', () => { if (G) { sfx.click(); resetCam(); positionTutorial(); } });
+  function markSeenHold() {
+    if (!save.seenHold) { save.seenHold = true; persist(); }
+  }
 
   function tapArrow(a) {
     if (!a.alive || a.fly) return;
@@ -296,6 +393,9 @@
       save.seenBend = true; persist();
       $('#tutorial-text').textContent = 'Kıvrımlı oklar! Gövde, başı takip ederek kayar.'; t.classList.remove('hidden'); $('#tutorial .hand').style.display = 'none';
     }
+    else if (!save.seenHold && G.n >= 3) {
+      $('#tutorial-text').textContent = 'Oka basılı tut: rotasını gör. İki parmakla yakınlaştır.'; t.classList.remove('hidden'); $('#tutorial .hand').style.display = 'none';
+    }
     else if (G.n === 11) { $('#tutorial-text').textContent = 'Taş bloklar hiç kalkmaz — yolunu ona göre seç.'; t.classList.remove('hidden'); $('#tutorial .hand').style.display = 'none'; }
     else t.classList.add('hidden');
   }
@@ -311,8 +411,8 @@
     if (!free) { hand.style.display = 'none'; return; }
     const r = canvas.getBoundingClientRect();
     const [hx, hy] = free.cells[free.cells.length - 1];
-    hand.style.left = (r.left + layout.ox + (hx + 0.45) * layout.cs) + 'px';
-    hand.style.top = (r.top + layout.oy + (hy + 0.55) * layout.cs) + 'px';
+    hand.style.left = (r.left + cam.x + (layout.ox + (hx + 0.45) * layout.cs) * cam.s) + 'px';
+    hand.style.top = (r.top + cam.y + (layout.oy + (hy + 0.55) * layout.cs) * cam.s) + 'px';
   }
   function advanceTutorial() {
     if (G.n === 1) positionTutorial();
@@ -400,6 +500,7 @@
     // sarsıntı
     const sh = now - G.shake < 300 ? (1 - (now - G.shake) / 300) * 6 : 0;
     if (sh) ctx.translate((Math.random() - 0.5) * sh, (Math.random() - 0.5) * sh);
+    ctx.translate(cam.x, cam.y); ctx.scale(cam.s, cam.s);
 
     // tahta
     const ch = G.ch;
@@ -432,6 +533,8 @@
       drawArrow(a, off, alpha, now);
     }
 
+    if (preview) drawPreview(preview, now);
+
     // parçacıklar
     G.particles = G.particles.filter(p => now - p.t0 < p.life);
     for (const p of G.particles) {
@@ -442,6 +545,53 @@
       else { ctx.beginPath(); ctx.arc(px, py, p.r * (1 - k), 0, Math.PI * 2); ctx.fill(); }
     }
     ctx.globalAlpha = 1;
+  }
+
+  // Basılı tutulan okun rotası
+  function drawPreview(a, now) {
+    if (!a.alive || a.fly) { preview = null; return; }
+    const { cs, ox, oy } = layout;
+    const p = pathInfo(a);
+    const dx = DX[a.d], dy = DY[a.d];
+    const cx = (gx) => ox + (gx + 0.5) * cs, cy = (gy) => oy + (gy + 0.5) * cs;
+    const sx = cx(a.x) + dx * cs * 0.45, sy = cy(a.y) + dy * cs * 0.45;
+    let ex, ey;
+    if (p.blocked) { ex = cx(a.x + dx * (p.k + 1)) - dx * cs * 0.5; ey = cy(a.y + dy * (p.k + 1)) - dy * cs * 0.5; }
+    else { ex = cx(a.x + dx * (p.k + 1)) + dx * cs * 0.1; ey = cy(a.y + dy * (p.k + 1)) + dy * cs * 0.1; }
+    const col = p.blocked ? '#ff3b5c' : '#3ddc84';
+    // yolun zemini
+    ctx.save();
+    ctx.globalAlpha = 0.18; ctx.fillStyle = col;
+    for (let k = 1; k <= p.k; k++) {
+      const gx = a.x + dx * k, gy = a.y + dy * k;
+      rr(ox + gx * cs + cs * 0.12, oy + gy * cs + cs * 0.12, cs * 0.76, cs * 0.76, cs * 0.18); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // kesik çizgi (akan)
+    ctx.strokeStyle = col; ctx.lineWidth = Math.max(2, cs * 0.08); ctx.lineCap = 'round';
+    ctx.setLineDash([cs * 0.18, cs * 0.16]); ctx.lineDashOffset = -(now / 25) % (cs * 0.34);
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.setLineDash([]);
+    if (p.blocked) {
+      // engel: kırmızı çerçeve + X
+      const bx = a.x + dx * (p.k + 1), by = a.y + dy * (p.k + 1);
+      const pulse = 0.5 + 0.5 * Math.sin(now / 90);
+      ctx.lineWidth = Math.max(2, cs * 0.07); ctx.strokeStyle = col;
+      ctx.globalAlpha = 0.6 + 0.4 * pulse;
+      rr(ox + bx * cs + cs * 0.04, oy + by * cs + cs * 0.04, cs * 0.92, cs * 0.92, cs * 0.22); ctx.stroke();
+      if (p.v >= 0) { // engelleyen okun tüm gövdesini işaretle
+        ctx.globalAlpha = 0.25 + 0.2 * pulse; ctx.fillStyle = col;
+        for (const [gx, gy] of G.arrows[p.v].cells) { rr(ox + gx * cs + cs * 0.08, oy + gy * cs + cs * 0.08, cs * 0.84, cs * 0.84, cs * 0.2); ctx.fill(); }
+      }
+      ctx.globalAlpha = 1; ctx.lineWidth = Math.max(2, cs * 0.09);
+      const m = cs * 0.2, qx = ex + dx * cs * 0.02, qy = ey + dy * cs * 0.02;
+      ctx.beginPath(); ctx.moveTo(qx - m, qy - m); ctx.lineTo(qx + m, qy + m); ctx.moveTo(qx + m, qy - m); ctx.lineTo(qx - m, qy + m); ctx.stroke();
+    } else {
+      // çıkış: küçük ok ucu
+      ctx.fillStyle = col; const hw = cs * 0.16, px = -dy, py = dx;
+      ctx.beginPath(); ctx.moveTo(ex + dx * hw * 1.4, ey + dy * hw * 1.4); ctx.lineTo(ex + px * hw, ey + py * hw); ctx.lineTo(ex - px * hw, ey - py * hw); ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
   }
 
   // Dokulu, çatlaklı taş (her hücre için sabit rastgele şekil)
@@ -531,11 +681,11 @@
     let sc = 1;
     const pt = now - a.pop; if (pt < 160) sc = 1 + Math.sin(pt / 160 * Math.PI) * 0.12;
     const ht = a.hint ? now - a.hint : 1e9;
-    const hinting = ht < 2400;
+    const hinting = ht < 2400 || preview === a;
     const [hcx, hcy] = P[P.length - 1];
     const tipx = hcx + dx * cs * 0.32, tipy = hcy + dy * cs * 0.32;
     const bx = tipx - dx * cs * 0.27, by = tipy - dy * cs * 0.27;
-    const hw = cs * 0.21 * sc, lw = cs * 0.14 * sc;
+    const hw = cs * 0.2 * sc, lw = cs * 0.12 * sc;
     const px = -dy, py = dx;
     P[0] = [P[0][0] - tdx * cs * 0.28, P[0][1] - tdy * cs * 0.28];
     P[P.length - 1] = [bx + dx * 2, by + dy * 2];
