@@ -199,7 +199,7 @@
     layout.dpr = dpr; layout.w = r.width; layout.h = r.height;
     if (!G) return;
     const pad = 14;
-    layout.cs = Math.floor(Math.min((r.width - pad * 2) / G.cols, (r.height - pad * 2) / G.rows, 92));
+    layout.cs = Math.floor(Math.min((r.width - pad * 2) / G.cols, (r.height - pad * 2) / G.rows, 58));
     layout.ox = (r.width - layout.cs * G.cols) / 2;
     layout.oy = (r.height - layout.cs * G.rows) / 2;
     positionTutorial();
@@ -459,17 +459,17 @@
     // ipucu nabzı
     const ht = a.hint ? now - a.hint : 1e9;
     const hinting = ht < 2400;
-    const sx = tcx - dx * cs * 0.3, sy = tcy - dy * cs * 0.3;   // kuyruk ucu
-    const tipx = hcx + dx * cs * 0.36, tipy = hcy + dy * cs * 0.36; // ok ucu
-    const bx = tipx - dx * cs * 0.34, by = tipy - dy * cs * 0.34;  // başın tabanı
-    const hw = cs * 0.27 * sc, lw = cs * 0.2 * sc;
+    const sx = tcx - dx * cs * 0.28, sy = tcy - dy * cs * 0.28;   // kuyruk ucu
+    const tipx = hcx + dx * cs * 0.32, tipy = hcy + dy * cs * 0.32; // ok ucu
+    const bx = tipx - dx * cs * 0.27, by = tipy - dy * cs * 0.27;  // başın tabanı
+    const hw = cs * 0.21 * sc, lw = cs * 0.14 * sc;
     const px = -dy, py = dx; // dik vektör
     ctx.globalAlpha = alpha;
     const shape = (col, yo) => {
       ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
       ctx.lineWidth = lw;
       ctx.beginPath(); ctx.moveTo(sx, sy + yo); ctx.lineTo(bx + dx * 2, by + dy * 2 + yo); ctx.stroke();
-      ctx.lineWidth = cs * 0.08;
+      ctx.lineWidth = cs * 0.06;
       ctx.beginPath(); ctx.moveTo(tipx, tipy + yo); ctx.lineTo(bx + px * hw, by + py * hw + yo); ctx.lineTo(bx - px * hw, by - py * hw + yo); ctx.closePath();
       ctx.fill(); ctx.stroke();
     };
@@ -477,7 +477,7 @@
       const k = 0.5 + 0.5 * Math.sin(ht / 120);
       ctx.save(); ctx.shadowColor = '#fff'; ctx.shadowBlur = 18 + k * 16; shape('#ffffff', 0); ctx.restore();
     }
-    shape(shade(color.startsWith('#') ? color : '#ffffff', -0.28), cs * 0.06);
+    shape(shade(color.startsWith('#') ? color : '#ffffff', -0.28), cs * 0.045);
     shape(color, 0);
     // parlama
     ctx.globalAlpha = alpha * 0.35; ctx.strokeStyle = '#fff'; ctx.lineWidth = lw * 0.25;

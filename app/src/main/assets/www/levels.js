@@ -134,9 +134,21 @@
     1: { cols: 3, rows: 4, walls: [], arrows: [
       { x: 1, y: 0, d: 0, len: 1 }, { x: 1, y: 2, d: 0, len: 2 }, { x: 0, y: 3, d: 1, len: 1 }, { x: 2, y: 3, d: 2, len: 1 } ] },
     2: { cols: 4, rows: 4, walls: [], arrows: [
-      { x: 0, y: 0, d: 1, len: 1 }, { x: 3, y: 0, d: 0, len: 1 }, { x: 1, y: 1, d: 3, len: 1 }, { x: 2, y: 1, d: 0, len: 2 },
-      { x: 0, y: 3, d: 0, len: 3 }, { x: 3, y: 3, d: 3, len: 3 }, { x: 3, y: 2, d: 0, len: 2 } ] },
+      { x: 0, y: 0, d: 1, len: 1 }, { x: 3, y: 0, d: 0, len: 1 }, { x: 1, y: 1, d: 3, len: 1 }, { x: 0, y: 1, d: 0, len: 3 },
+      { x: 2, y: 1, d: 0, len: 2 }, { x: 2, y: 3, d: 3, len: 2 }, { x: 3, y: 1, d: 0, len: 2 } ] },
   };
+
+  // Seviye geçerli mi? Tüm hücreler tahtada, çakışma yok, çözülebilir.
+  function validate(lv) {
+    const seen = new Set(lv.walls.map(([x, y]) => y * lv.cols + x));
+    for (const a of lv.arrows) for (const [x, y] of a.cells) {
+      if (x < 0 || y < 0 || x >= lv.cols || y >= lv.rows) return 'tahta dışında';
+      const k = y * lv.cols + x;
+      if (seen.has(k)) return 'çakışma';
+      seen.add(k);
+    }
+    return analyze(lv.cols, lv.rows, lv.walls, lv.arrows).solvable ? null : 'çözülemez';
+  }
 
   function generateLevel(n) {
     if (HANDMADE[n]) {
@@ -162,7 +174,7 @@
     return best;
   }
 
-  const api = { DX, DY, generateLevel, levelParams, analyze, firstBlock, makeGrid, cellsOf };
+  const api = { DX, DY, generateLevel, validate, levelParams, analyze, firstBlock, makeGrid, cellsOf };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ArrowLevels = api;
 })(this);
