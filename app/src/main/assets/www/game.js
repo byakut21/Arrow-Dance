@@ -336,7 +336,7 @@
       a.alive = false;
       a.cells.forEach(([x, y]) => { G.grid[y * G.cols + x] = -1; });
       const dist = p.k + a.len + 1.5;
-      a.fly = { type: 'exit', t0: now, dur: 200 + dist * 55, dist };
+      a.fly = { type: 'exit', t0: now, dur: 90 + dist * 20, dist };
       G.left--; G.tapped++;
       sfx.whoosh(G.tapped); buzz(12);
       spawnTrail(a);
@@ -345,8 +345,8 @@
       advanceTutorial();
     } else {
       // Çarpışma: ileri gider, çarpar, geri döner
-      const fwd = 90 + p.k * 45;
-      a.fly = { type: 'bump', t0: now, fwd, back: 220, k: p.k + 0.28 };
+      const fwd = 60 + p.k * 18;
+      a.fly = { type: 'bump', t0: now, fwd, back: 150, k: p.k + 0.28 };
       const target = p.v >= 0 ? G.arrows[p.v] : null;
       setTimeout(() => {
         if (!G) return;
@@ -521,7 +521,7 @@
         const t = now - a.fly.t0;
         if (a.fly.type === 'exit') {
           const p = Math.min(1, t / a.fly.dur);
-          off = a.fly.dist * (p * p * 0.55 + p * 0.45);
+          off = a.fly.dist * (p * p * 0.35 + p * 0.65);
           if (p >= 1) { a.fly = null; a.gone = true; }
         } else {
           if (t < a.fly.fwd) off = a.fly.k * easeOut(t / a.fly.fwd);
