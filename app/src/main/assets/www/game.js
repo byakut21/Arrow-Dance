@@ -243,15 +243,34 @@
   const ptrs = new Map();
   let gesture = null; // {sx, sy, t, moved, pinch, holdTimer, d0, s0, mx0, my0, cx0, cy0}
   let preview = null; // basılı tutulan ok
-  const LONG_MS = 260;
+  const LONG_MS = 450;   // basılı tutma eşiği
+  const MOVE_PX = 18;    // bu kadar kayarsa dokunma değil sürükleme
 
   function localPt(e) { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+  // En yakın oku bul: parmağın okun gövde çizgisine uzaklığına göre.
+  // İnce çizgiye tam basmak gerekmez, yakınına dokunmak yeter.
   function arrowAtScreen(sx, sy) {
-    const bx = (sx - cam.x) / cam.s - layout.ox, by = (sy - cam.y) / cam.s - layout.oy;
-    const cx = Math.floor(bx / layout.cs), cy = Math.floor(by / layout.cs);
-    if (cx < 0 || cy < 0 || cx >= G.cols || cy >= G.rows) return null;
-    const v = G.grid[cy * G.cols + cx];
-    return v >= 0 ? G.arrows[v] : null;
+    const s = cam.s, cs = layout.cs;
+    const bx = (sx - cam.x) / s, by = (sy - cam.y) / s;       // tahta koordinatı (px)
+    const gx = (bx - layout.ox) / cs - 0.5, gy = (by - layout.oy) / cs - 0.5; // hücre birimi
+    // tolerans: en az ~26 ekran pikseli ya da 0.75 hücre
+    const tol = Math.max(26 / (cs * s), 0.75);
+    let best = null, bestD = Infinity;
+    for (const a of G.arrows) {
+      if (!a.alive) continue;
+      const c = a.cells;
+      // gövde parçaları + ok ucu
+      const pts = c.slice();
+      pts.push([a.x + DX[a.d] * 0.35, a.y + DY[a.d] * 0.35]);
+      for (let i = 0; i < pts.length; i++) {
+        const [x1, y1] = pts[i], [x2, y2] = pts[Math.min(i + 1, pts.length - 1)];
+        const vx = x2 - x1, vy = y2 - y1, L2 = vx * vx + vy * vy;
+        let t = L2 ? ((gx - x1) * vx + (gy - y1) * vy) / L2 : 0; t = Math.max(0, Math.min(1, t));
+        const d = Math.hypot(gx - (x1 + vx * t), gy - (y1 + vy * t));
+        if (d < bestD) { bestD = d; best = a; }
+      }
+    }
+    return bestD <= tol ? best : null;
   }
 
   canvas.addEventListener('pointerdown', (e) => {
@@ -290,7 +309,7 @@
       return;
     }
     if (preview) return; // rota gösterilirken kaydırma yok
-    if (!gesture.moved && Math.hypot(x - gesture.sx, y - gesture.sy) > 10) { gesture.moved = true; clearTimeout(gesture.holdTimer); }
+    if (!gesture.moved && Math.hypot(x - gesture.sx, y - gesture.sy) > (cam.s > 1 ? MOVE_PX : 40)) { gesture.moved = true; clearTimeout(gesture.holdTimer); }
     if (gesture.moved && cam.s > 1) {
       cam.x += x - gesture.lx; cam.y += y - gesture.ly; clampCam(); positionTutorial();
     }
@@ -305,7 +324,7 @@
       const [[x, y]] = [...ptrs.values()]; gesture.lx = x; gesture.ly = y; gesture.pinch = false; return;
     }
     clearTimeout(gesture.holdTimer);
-    const wasTap = !gesture.moved && !gesture.pinch && !preview && performance.now() - gesture.t < 600;
+    const wasTap = !gesture.moved && !gesture.pinch && !preview;
     if (wasTap && G && !G.done && e.type === 'pointerup') {
       const a = arrowAtScreen(gesture.sx, gesture.sy);
       if (a) tapArrow(a);
