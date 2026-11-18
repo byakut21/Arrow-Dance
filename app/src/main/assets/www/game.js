@@ -22,7 +22,7 @@
   // ---------- Kayıt ----------
   const SAVE_KEY = 'arrowdance_v1';
   const save = Object.assign({
-    id: null, name: '', unlocked: 1, best: {}, hints: 3, sound: true, vibrate: true,
+    id: null, name: '', unlocked: 1, best: {}, hints: 3, sound: true, vibrate: true, tried: {}, won: {}, voted: {}, attempts: {},
   }, (() => { try { return JSON.parse(localStorage.getItem(SAVE_KEY)) || {}; } catch (e) { return {}; } })());
   if (!save.id) {
     save.id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
@@ -83,12 +83,12 @@
     clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 1800);
   }
   function modal(html) { $('#modal-card').innerHTML = html; $('#modal').classList.remove('hidden'); }
-  function closeModal() { $('#modal').classList.add('hidden'); }
+  function closeModal() { $('#modal').classList.add('hidden'); modal._onBack = null; }
   const modalOpen = () => !$('#modal').classList.contains('hidden');
 
   // Android geri tuşu: true => uygulama içinde işlendi
   window.onAndroidBack = function () {
-    if (modalOpen()) { if (!modal._locked) closeModal(); return true; }
+    if (modalOpen()) { if (modal._onBack) { const f = modal._onBack; modal._onBack = null; f(); } else if (!modal._locked) closeModal(); return true; }
     if (current === 'game') { show('levels'); return true; }
     if (current !== 'home') { show('home'); return true; }
     return false;
@@ -180,7 +180,7 @@
     clampCam(); positionTutorial();
   }
 
-  function startLevel(n) {
+  function startLevel(n, opts = {}) {
     closeModal();
     const lv = generateLevel(n);
     const ch = chapterOf(n);
@@ -192,8 +192,9 @@
     G = {
       n, ch, cols: lv.cols, rows: lv.rows, walls: lv.walls, arrows, grid,
       left: arrows.length, total: arrows.length, hearts: 3, mistakes: 0,
-      start: 0, elapsed: 0, done: false, particles: [], shake: 0, tapped: 0,
+      start: 0, elapsed: 0, done: false, particles: [], shake: 0, tapped: 0, depth: lv.depth || 1,
     };
+    save.attempts[n] = (save.attempts[n] || 0) + 1; persist();
     $('#hud-chapter').textContent = `${chapterIndex(n) + 1}. ${ch.name}`;
     $('#hud-level').textContent = 'Seviye ' + n;
     updateHud();
@@ -202,6 +203,7 @@
     resize();
     setupTutorial();
     startLoop();
+    if (!opts.noIntro && n > 2) showIntro(n);
   }
 
   function updateHud() {
@@ -347,7 +349,10 @@
   function tapArrow(a) {
     if (!a.alive || a.fly) return;
     const now = performance.now();
-    if (!G.start) G.start = now;
+    if (!G.start) {
+      G.start = now;
+      if (!save.tried[G.n]) { save.tried[G.n] = 1; persist(); window.Leaderboard.inc(G.n, 'tried'); }
+    }
     a.pop = now; a.hint = 0;
     const p = pathInfo(a);
     if (!p.blocked) {
@@ -381,7 +386,7 @@
     }
   }
 
-  $('#btn-restart').addEventListener('click', () => { sfx.click(); if (G) startLevel(G.n); });
+  $('#btn-restart').addEventListener('click', () => { sfx.click(); if (G) startLevel(G.n, { noIntro: true }); });
   $('#btn-hint').addEventListener('click', () => {
     if (!G || G.done) return;
     if (save.hints <= 0) { toast('İpucu kalmadı — 3 yıldızla kazan!'); return; }
@@ -450,12 +455,13 @@
     G.elapsed = elapsed;
     const n = G.n;
     if (!win) {
+      window.Leaderboard.inc(n, 'fails');
       setTimeout(() => {
         sfx.fail(); buzz(200);
         modal._locked = true;
         modal(`<h2>💔 Canlar bitti</h2><p>Seviye ${n} — sıranı iyi planla!</p>
           <div class="btns"><button class="btn" id="m-home">Menü</button><button class="btn primary" id="m-retry">Tekrar</button></div>`);
-        $('#m-retry').onclick = () => { modal._locked = false; startLevel(n); };
+        $('#m-retry').onclick = () => { modal._locked = false; startLevel(n, { noIntro: true }); };
         $('#m-home').onclick = () => { modal._locked = false; closeModal(); show('levels'); };
       }, 600);
       return;
@@ -470,6 +476,7 @@
       newBest = true;
     }
     if (stars === 3 && (!prev || prev.stars < 3)) { save.hints++; bonusHint = true; }
+    if (!save.won[n]) { save.won[n] = 1; window.Leaderboard.inc(n, 'won'); }
     if (n === save.unlocked) save.unlocked = n + 1;
     persist();
     submitScore();
@@ -481,10 +488,68 @@
         <div class="stars">${[1, 2, 3].map(i => `<span class="${i > stars ? 'off' : ''}" style="animation-delay:${i * 0.15}s">⭐</span>`).join('')}</div>
         <div class="score">${score.toLocaleString('tr-TR')}</div>
         <p>⏱ ${fmtTime(elapsed)} · ${G.total} ok${newBest && prev ? ' · Yeni rekor!' : ''}${bonusHint ? '<br>💡 +1 ipucu kazandın' : ''}${chapterDone ? '<br>🎉 Yeni bölüm açıldı: ' + chapterOf(n + 1).name : ''}</p>
+        ${save.voted[n] ? '' : `<div class="vote" id="m-vote"><small>Bu bölüm nasıldı?</small><div>
+          <button class="btn" data-v="easy">😌 Kolay</button><button class="btn" data-v="mid">🙂 Orta</button><button class="btn" data-v="hard">😤 Zor</button></div></div>`}
         <div class="btns"><button class="btn" id="m-retry">↻</button><button class="btn primary" id="m-next" style="flex:3">Sonraki ➜</button></div>`);
-      $('#m-retry').onclick = () => { modal._locked = false; startLevel(n); };
+      document.querySelectorAll('#m-vote [data-v]').forEach(b => b.onclick = async () => {
+        const v = b.dataset.v; save.voted[n] = v; persist(); sfx.click();
+        window.Leaderboard.inc(n, v);
+        const box = $('#m-vote'); box.innerHTML = '<small>Teşekkürler! 🙏</small>';
+        const st = await window.Leaderboard.stats(n);
+        if (st && box.isConnected) {
+          const V = st.easy + st.mid + st.hard;
+          if (V > 0) box.innerHTML = `<small>Teşekkürler! Bu bölümü zor bulanlar: <b>%${Math.round(st.hard / V * 100)}</b> (${V} oy)</small>`;
+        }
+      });
+      $('#m-retry').onclick = () => { modal._locked = false; startLevel(n, { noIntro: true }); };
       $('#m-next').onclick = () => { modal._locked = false; startLevel(n + 1); };
     }, 450);
+  }
+
+  // ---------- Bölüm arası not ----------
+  const TIPS = [
+    'Oka basılı tut: rotası yeşilse yol açık, kırmızıysa engel var.',
+    'Önce kenara bakan okları bul — genelde ilk onlar çıkar.',
+    'Kıvrımlı okun sadece BAŞININ önü açık olmalı; gövde onu takip eder.',
+    'Taşlar hiç kalkmaz. Taşa bakan ok o yönden asla çıkamaz.',
+    'Takıldıysan iki parmakla yakınlaştır, gövdeleri daha net gör.',
+    'Hatasız bitirirsen 3 yıldız ve +1 ipucu kazanırsın.',
+    'Bir okun önünü kapatan oku bul, önce onu çıkar.',
+  ];
+  const DIFF = ['Çok kolay', 'Kolay', 'Orta', 'Zor', 'Çok zor'];
+  function difficultyOf(g) {
+    // çözüm derinliği + ok sayısı + kıvrımlara göre 1..5
+    const bendsTotal = g.arrows.reduce((s, a) => s + (isBent(a) ? 1 : 0), 0);
+    const score = g.depth * 1.0 + g.total * 0.08 + bendsTotal * 0.05;
+    return Math.max(1, Math.min(5, Math.round(score / 6)));
+  }
+  function showIntro(n) {
+    const d = difficultyOf(G);
+    const best = save.best[n];
+    const tries = save.attempts[n] || 1;
+    const tip = TIPS[(n * 7) % TIPS.length];
+    modal._locked = true;
+    modal._onBack = () => { modal._locked = false; closeModal(); show('levels'); };
+    modal(`<small class="intro-ch">${chapterIndex(n) + 1}. ${G.ch.name}</small>
+      <h2>Seviye ${n}</h2>
+      <div class="intro-diff">${'★'.repeat(d)}<span>${'★'.repeat(5 - d)}</span> <b>${DIFF[d - 1]}</b></div>
+      <div class="intro-stats" id="m-stats">${window.Leaderboard.enabled() ? '<div class="st muted">🌍 Dünya istatistikleri yükleniyor…</div>' : ''}</div>
+      <div class="intro-me">${best ? `Rekorun: ${'⭐'.repeat(best.stars)} · ${best.score.toLocaleString('tr-TR')} puan` : tries > 1 ? `${tries}. denemen — bu sefer olacak! 💪` : `${G.total} ok · ilk denemen`}</div>
+      <p class="intro-tip">💡 ${tip}</p>
+      <div class="btns"><button class="btn primary" id="m-go">Başla ➜</button></div>`);
+    $('#m-go').onclick = () => { modal._locked = false; closeModal(); sfx.click(); };
+    if (!window.Leaderboard.enabled()) return;
+    window.Leaderboard.stats(n).then(st => {
+      const box = $('#m-stats'); if (!box || !box.isConnected) return;
+      if (!st) { box.innerHTML = '<div class="st muted">📡 Dünya istatistiklerine ulaşılamadı</div>'; return; }
+      if (!st.tried) { box.innerHTML = '<div class="st">🌍 Bu bölümü henüz kimse denemedi — <b>ilk sen ol!</b></div>'; return; }
+      const notDone = Math.max(0, st.tried - st.won);
+      const V = st.easy + st.mid + st.hard;
+      let html = `<div class="st">👥 <b>${st.tried.toLocaleString('tr-TR')}</b> kişi denedi, <b>${notDone.toLocaleString('tr-TR')}</b> kişi tamamlayamadı</div>`;
+      html += `<div class="st">✅ Tamamlama oranı: <b>%${Math.round(st.won / st.tried * 100)}</b></div>`;
+      if (V > 0) html += `<div class="st">😤 Zor bulanlar: <b>%${Math.round(st.hard / V * 100)}</b> <small>(${V} oy)</small></div>`;
+      box.innerHTML = html;
+    });
   }
 
   function submitScore() {

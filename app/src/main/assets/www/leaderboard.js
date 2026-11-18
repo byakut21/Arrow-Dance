@@ -52,6 +52,30 @@
         .slice(0, limit);
     },
 
+    // ---- Bölüm istatistikleri (gerçek oyuncu verisi) ----
+    // stats/{seviye} = { tried, won, fails, easy, mid, hard }
+    inc(level, field) {
+      if (!this.enabled()) return;
+      try {
+        fetch(`${base()}/stats/${level}.json`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [field]: { '.sv': { increment: 1 } } }),
+        }).catch(() => {});
+      } catch (e) { /* çevrimdışı */ }
+    },
+    async stats(level) {
+      if (!this.enabled()) return null;
+      const ctl = window.AbortController ? new AbortController() : null;
+      const to = setTimeout(() => ctl && ctl.abort(), 3500);
+      try {
+        const r = await fetch(`${base()}/stats/${level}.json`, ctl ? { signal: ctl.signal } : {});
+        if (!r.ok) return null;
+        const d = (await r.json()) || {};
+        const num = (k) => (typeof d[k] === 'number' ? d[k] : 0);
+        return { tried: num('tried'), won: num('won'), fails: num('fails'), easy: num('easy'), mid: num('mid'), hard: num('hard') };
+      } catch (e) { return null; } finally { clearTimeout(to); }
+    },
+
     // Oyuncunun sırası (kendi skorundan yüksek kaç kişi var + 1)
     async rankOf(score) {
       if (!this.enabled()) return null;

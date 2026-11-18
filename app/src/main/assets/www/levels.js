@@ -32,11 +32,11 @@
       cols,
       rows: Math.min(Math.round(cols * 1.5), 18),
       density: Math.min(0.55 + n * 0.012, 0.9),
-      maxLen: n < 4 ? 2 : n < 8 ? 3 : n < 16 ? 5 : n < 30 ? 6 : n < 60 ? 8 : 10,
-      turn: n < 3 ? 0 : Math.min(0.55 + n * 0.01, 0.8), // kıvrılma olasılığı
+      maxLen: n < 3 ? 2 : n < 6 ? 4 : n < 12 ? 6 : n < 25 ? 8 : n < 50 ? 10 : 12,
+      turn: n < 3 ? 0 : Math.min(0.72 + n * 0.008, 0.93), // kıvrılma olasılığı
       walls: n < 11 ? 0 : Math.min(1 + Math.floor((n - 11) / 4), 14),
-      chainBias: Math.min(0.35 + n * 0.02, 0.92),
-      targetDepth: Math.min(2 + Math.floor(n / 2), 24),
+      chainBias: Math.min(0.5 + n * 0.02, 0.97),
+      targetDepth: Math.min(3 + Math.floor(n * 0.6), 32),
     };
   }
 
@@ -150,7 +150,7 @@
             bx += DX[b.d]; by += DY[b.d];
           }
         }
-        cands.push({ a, score: score + bends(cells) * 0.6 });
+        cands.push({ a, score: score + bends(cells) * 1.2 });
       }
       if (!cands.length) { fails++; continue; }
       let pick = cands[0];
@@ -205,7 +205,7 @@
     const p = levelParams(n);
     const rng = mulberry32((Math.imul(n, 2654435761) ^ 0x5EED1234) >>> 0);
     let best = null, bestScore = -Infinity;
-    for (let attempt = 0; attempt < 6; attempt++) {
+    for (let attempt = 0; attempt < 8; attempt++) {
       const lv = buildOnce(p, rng);
       if (lv.arrows.length < 2) continue;
       const r = analyze(lv.cols, lv.rows, lv.walls, lv.arrows);
